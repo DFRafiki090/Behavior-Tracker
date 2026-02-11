@@ -20,3 +20,357 @@ Points Remaining: 85
 [ ____________________ ]
 
 ☑ Share with Parent
+npx create-expo-app beacon
+cd beacon
+npm start
+/app
+  /screens
+    ClassDashboard.tsx
+    StudentBehaviorScreen.tsx
+  /components
+    StudentCard.tsx
+    BehaviorButton.tsx
+  /data
+    behaviors.ts
+  /types
+    models.ts
+// types/models.ts
+export type BehaviorType = 'unpreferred' | 'positive';
+
+export interface Behavior {
+  id: string;
+  name: string;
+  type: BehaviorType;
+  pointValue?: number;
+  replacementFor?: string;
+}
+// data/behaviors.ts
+export const behaviors = [
+  { id: 'off_task', name: 'Off Task', type: 'unpreferred', pointValue: 5, replacementFor: 'on_task' },
+  { id: 'disruptive', name: 'Disruptive', type: 'unpreferred', pointValue: 10 },
+  { id: 'on_task', name: 'On Task', type: 'positive' },
+  { id: 'self_advocacy', name: 'Self Advocacy', type: 'positive' }
+];
+// components/BehaviorButton.tsx
+import { View, Text, Pressable } from 'react-native';
+
+export default function BehaviorButton({ label, count, onPress }) {
+  return (
+    <Pressable onPress={onPress} style={{
+      padding: 16,
+      borderRadius: 12,
+      backgroundColor: '#f2f2f2',
+      marginBottom: 12
+    }}>
+      <Text style={{ fontSize: 16, fontWeight: '600' }}>{label}</Text>
+      <Text style={{ opacity: 0.6 }}>{count}× today</Text>
+    </Pressable>
+  );
+}
+// screens/StudentBehaviorScreen.tsx
+import { View, Text } from 'react-native';
+import BehaviorButton from '../components/BehaviorButton';
+
+export default function StudentBehaviorScreen() {
+  return (
+    <View style={{ padding: 20 }}>
+      <Text style={{ fontSize: 20, fontWeight: '700' }}>
+        Points Remaining: 85
+      </Text>
+
+      <Text style={{ marginTop: 20 }}>Unpreferred Behaviors</Text>
+      <BehaviorButton label="Off Task" count={3} onPress={() => {}} />
+
+      <Text style={{ marginTop: 20 }}>Positive Behaviors</Text>
+      <BehaviorButton label="On Task" count={4} onPress={() => {}} />
+    </View>
+  );
+}
+user {
+  uid
+  role: 'teacher' | 'staff' | 'parent' | 'student'
+  linkedStudentIds?: string[]
+}
+student {
+  id
+  name
+  baselinePoints: 100
+}
+behavior {
+  id
+  name
+  type: 'unpreferred' | 'positive'
+  pointValue?: number
+  replacementFor?: string
+}
+behaviorLog {
+  studentId
+  behaviorId
+  date: '2026-02-09'
+  timestamp
+  periodId
+  pointsApplied: boolean
+  interventionId?: string
+}
+if (firstOccurrenceToday) {
+  deductPoints()
+  pointsApplied = true
+} else {
+  pointsApplied = false
+}
+logFrequency()
+// firebase.ts
+import { initializeApp } from 'firebase/app';
+import { getAuth } from 'firebase/auth';
+import { getFirestore } from 'firebase/firestore';
+
+const firebaseConfig = {
+  apiKey: 'XXX',
+  authDomain: 'XXX',
+  projectId: 'XXX',
+  storageBucket: 'XXX',
+  messagingSenderId: 'XXX',
+  appId: 'XXX'
+};
+
+const app = initializeApp(firebaseConfig);
+
+export const auth = getAuth(app);
+export const db = getFirestore(app);
+// firestore: users/{uid}
+{
+  role: 'teacher', // staff | parent | student
+  linkedStudentIds: []
+}
+export const isTeacher = (user) => user.role === 'teacher';
+import {
+  collection,
+  addDoc,
+  query,
+  where,
+  getDocs
+} from 'firebase/firestore';
+
+export async function logBehavior({
+  studentId,
+  behavior,
+  periodId
+}) {
+  const today = new Date().toISOString().split('T')[0];
+
+  const q = query(
+    collection(db, 'behaviorLogs'),
+    where('studentId', '==', studentId),
+    where('behaviorId', '==', behavior.id),
+    where('date', '==', today)
+  );
+
+  const existing = await getDocs(q);
+  const firstOccurrence = existing.empty;
+
+  await addDoc(collection(db, 'behaviorLogs'), {
+    studentId,
+    behaviorId: behavior.id,
+    behaviorType: behavior.type,
+    date: today,
+    timestamp: new Date(),
+    periodId,
+    pointsApplied: firstOccurrence && behavior.type === 'unpreferred'
+  });
+
+  if (firstOccurrence && behavior.type === 'unpreferred') {
+    await deductPoints(studentId, behavior.pointValue);
+  }
+}
+import { doc, updateDoc, increment } from 'firebase/firestore';
+
+async function deductPoints(studentId, points) {
+  const studentRef = doc(db, 'students', studentId);
+
+  await updateDoc(studentRef, {
+    currentPoints: increment(-points)
+  });
+}
+export async function getDailyFrequencies(studentId, date) {
+  const q = query(
+    collection(db, 'behaviorLogs'),
+    where('studentId', '==', studentId),
+    where('date', '==', date)
+  );
+
+  const snapshot = await getDocs(q);
+  const counts = {};
+
+  snapshot.forEach(doc => {
+    const b = doc.data().behaviorId;
+    counts[b] = (counts[b] || 0) + 1;
+  });
+
+  return counts;
+}
+<BehaviorButton
+  label="Off Task"
+  count={frequency['off_task'] || 0}
+  onPress={() =>
+    logBehavior({
+      studentId,
+      behavior,
+      periodId
+    })
+  }
+/>
+// services/behaviorQueries.ts
+import {
+  collection,
+  query,
+  where,
+  getDocs
+} from 'firebase/firestore';
+import { db } from '../firebase';
+
+export async function getDailyLogs(studentId: string, date: string) {
+  const q = query(
+    collection(db, 'behaviorLogs'),
+    where('studentId', '==', studentId),
+    where('date', '==', date)
+  );
+
+  const snapshot = await getDocs(q);
+  return snapshot.docs.map(doc => doc.data());
+}
+// utils/aggregateBehaviors.ts
+export function aggregateByBehavior(logs, type) {
+  const counts = {};
+
+  logs
+    .filter(l => l.behaviorType === type)
+    .forEach(l => {
+      counts[l.behaviorId] = (counts[l.behaviorId] || 0) + 1;
+    });
+
+  return Object.entries(counts).map(([id, count]) => ({
+    label: id.replace('_', ' '),
+    value: count
+  }));
+}
+npm install victory-native
+// components/DailyBarGraph.tsx
+import { VictoryBar, VictoryChart, VictoryAxis } from 'victory-native';
+
+export default function DailyBarGraph({ data }) {
+  return (
+    <VictoryChart domainPadding={20}>
+      <VictoryAxis
+        style={{ tickLabels: { fontSize: 10, angle: -30 } }}
+      />
+      <VictoryAxis dependentAxis />
+      <VictoryBar data={data} x="label" y="value" />
+    </VictoryChart>
+  );
+}
+const [view, setView] = useState<'unpreferred' | 'positive'>('unpreferred');
+
+const graphData = aggregateByBehavior(logs, view);
+[ Unpreferred ]   [ Positive ]
+export function buildPointsTimeline(logs, baseline) {
+  let points = baseline;
+
+  return logs
+    .sort((a, b) => a.timestamp.seconds - b.timestamp.seconds)
+    .map(log => {
+      if (log.pointsApplied) {
+        points -= log.pointValue;
+      }
+      return {
+        time: log.timestamp.toDate(),
+        points
+      };
+    });
+}
+match /behaviorLogs/{log} {
+  allow read: if request.auth.uid == parentOfStudent(log.studentId)
+              && log.behaviorType == 'positive';
+}
+export async function getDailySummary(studentId, date) {
+  const logs = await getDailyLogs(studentId, date);
+
+  const positive = logs.filter(l => l.behaviorType === 'positive');
+
+  return {
+    positiveBehaviors: [...new Set(positive.map(p => p.behaviorId))],
+    progressPercent: calculateProgress(logs)
+  };
+}
+function calculateProgress(logs) {
+  // NOT raw points shown
+  const deductions = logs.filter(l => l.pointsApplied).length;
+  return Math.max(100 - deductions * 5, 60);
+}
+// screens/ParentHomeScreen.tsx
+import { View, Text } from 'react-native';
+
+export default function ParentHomeScreen({ summary }) {
+  return (
+    <View style={{ padding: 24 }}>
+      <Text style={{ fontSize: 18, fontWeight: '600' }}>
+        Today’s Progress
+      </Text>
+
+      <Text style={{ fontSize: 36, marginVertical: 16 }}>
+        {summary.progressPercent}%
+      </Text>
+
+      <Text style={{ marginTop: 20, fontWeight: '500' }}>
+        🌟 Positive Behaviors Observed
+      </Text>
+
+      {summary.positiveBehaviors.map(b => (
+        <Text key={b}>• {b.replace('_', ' ')}</Text>
+      ))}
+    </View>
+  );
+}
+Replacement Ratio = Positive / (Positive + Unpreferred)
+function calculateTrend(before, after) {
+  const change = ((after - before) / before) * 100;
+  return Math.round(change);
+}
+function buildSummary({ behavior, change }) {
+  if (change < 0) {
+    return `${behavior} decreased by ${Math.abs(change)}%.`;
+  }
+  if (change > 0) {
+    return `${behavior} increased by ${change}%.`;
+  }
+  return `${behavior} remained stable.`;
+}
+// screens/IEPReportScreen.tsx
+<TabView>
+  <Tab title="Frequency" />
+  <Tab title="Time of Day" />
+  <Tab title="Replacement" />
+  <Tab title="Intervention" />
+</TabView>
+users/{uid} {
+  role: "teacher" | "parent" | "student",
+  linkedStudents: []
+}
+<RequireRole allowed={["teacher"]}>
+  <TeacherBehaviorLoggingScreen />
+</RequireRole>
+behaviorLogs/{studentId}_{date}
+{
+  "pointsStart": 100,
+  "pointsCurrent": 92,
+  "behaviors": {
+    "offTask": {
+      "deducted": true,
+      "count": 3,
+      "lastLogged": "10:42am"
+    }
+  },
+  "positives": {
+    "onTask": { "count": 4 }
+  }
+}
+sharedSummaries/{studentId}_{date}

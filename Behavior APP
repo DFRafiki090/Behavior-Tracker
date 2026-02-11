@@ -374,3 +374,102 @@ behaviorLogs/{studentId}_{date}
   }
 }
 sharedSummaries/{studentId}_{date}
+import {
+  collection,
+  addDoc,
+  query,
+  where,
+  getDocs,
+  doc,
+  updateDoc,
+  increment
+} from 'firebase/firestore';
+import { db } from '../firebase';
+import { Behavior } from '../types/models';
+
+interface LogBehaviorParams {
+  studentId: string;
+  behavior: Behavior;
+  periodId: string;
+}
+
+/**
+ * Log a behavior occurrence for a student
+ * - Checks if behavior already occurred today
+ * - Deducts points only on first occurrence of unpreferred behaviors
+ * - Throws error with details if validation fails
+ */
+export async function logBehavior({
+  studentId,
+  behavior,
+  periodId
+}: LogBehaviorParams): Promise<void> {
+  if (!studentId || !behavior || !periodId) {
+    throw new Error('Missing required parameters: studentId, behavior, periodId');
+  }
+
+  try {
+    const today = new Date().toISOString().split('T')[0];
+
+    // Check if this behavior was logged today already
+    const q = query(
+      collection(db, 'behaviorLogs'),
+      where('studentId', '==', studentId),
+      where('behaviorId', '==', behavior.id),
+      where('date', '==', today)
+    );
+
+    const existing = await getDocs(q);
+    const firstOccurrence = existing.empty;
+
+    // Add log entry
+    await addDoc(collection(db, 'behaviorLogs'), {
+      studentId,
+      behaviorId: behavior.id,
+      behaviorType: behavior.type,
+      date: today,
+      timestamp: new Date(),
+      periodId,
+      pointsApplied: firstOccurrence && behavior.type === 'unpreferred'
+    });
+
+    // Deduct points only if:
+    // 1. First occurrence today
+    // 2. Behavior is unpreferred type
+    // 3. pointValue is a valid number
+    if (firstOccurrence && behavior.type === 'unpreferred') {
+      if (typeof behavior.pointValue === 'number' && behavior.pointValue > 0) {
+        await deductPoints(studentId, behavior.pointValue);
+      } else {
+        throw new Error(
+          `Invalid pointValue for behavior "${behavior.id}": ${behavior.pointValue}`
+        );
+      }
+    }
+  } catch (err) {
+    console.error('Error in logBehavior:', err);
+    throw new Error(`Failed to log behavior: ${err instanceof Error ? err.message : 'Unknown error'}`);
+  }
+}
+
+/**
+ * Deduct points from a student's current balance
+ * Validates point value to prevent NaN updates
+ */
+async function deductPoints(studentId: string, points: number): Promise<void> {
+  if (typeof points !== 'number' || points <= 0 || isNaN(points)) {
+    throw new Error(`Invalid point amount: ${points}`);
+  }
+
+  try {
+    const studentRef = doc(db, 'students', studentId);
+    await updateDoc(studentRef, {
+      currentPoints: increment(-points)
+    });
+  } catch (err) {
+    console.error('Error deducting points:', err);
+    throw new Error(
+      `Failed to deduct points: ${err instanceof Error ? err.message : 'Unknown error'}`
+    );
+  }
+}
